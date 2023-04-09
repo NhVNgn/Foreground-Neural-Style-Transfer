@@ -1,6 +1,6 @@
 """
 Neural Style Transfer
-This implementation used code from https://github.com/pytorch/tutorials/tree/main/advanced_source
+This implementation used codes from https://github.com/pytorch/tutorials/tree/main/advanced_source
 Authors: 
 Alexis Jacq: https://alexis-jacq.github.io
 Winston Herring: https://github.com/winston6_
@@ -67,21 +67,27 @@ class ContentLoss(nn.Module):
         self.target = target.detach()
 
     def forward(self, input):
+        # to caculate how much content loss between input tensors and target tensor
         self.loss = F.mse_loss(input, self.target)
         return input
 
 
+# Take input of a feature map of a layer and return gram matrix
+#  The gram matrix represents the correlations between the different feature maps of a given layer
 def gram_matrix(input):
-    a, b, c, d = input.size()  # a=batch size(=1)
+    batch_size, channel, width, height = input.size()
+    # a=batch size(=1)
     # b=number of feature maps
     # (c,d)=dimensions of a f. map (N=c*d)
 
-    features = input.view(a * b, c * d)  # resise F_XL into \hat F_XL
+    # resise F_XL into \hat F_XL
+    features = input.view(batch_size * channel, width * height)
 
-    G = torch.mm(features, features.t())  # compute the gram product
+    # compute the gram product, t(): transpose
+    G = torch.mm(features, features.t())
 
     # normalize the values of the gram matrix by dividing by the number of element in each feature maps.
-    return G.div(a * b * c * d)
+    return G.div(batch_size * channel * width * height)
 
 
 class StyleLoss(nn.Module):
@@ -110,33 +116,28 @@ class Normalization(nn.Module):
         return (img - self.mean) / self.std
 
 
-def get_style_model_and_losses(cnn, normalization_mean, normalization_std,
-                               style_img, content_img,
-                               content_layers=content_layers_default,
-                               style_layers=style_layers_default):
+# get the model which is a subsets that contains all necessary layers of the cnn for neural style transfer purpose, discard other unecessary layers.
+def get_nst_model_and_losses(cnn, normalization_mean, normalization_std,
+                             style_img, content_img,
+                             content_layers=content_layers_default,
+                             style_layers=style_layers_default):
     # normalization module
     normalization = Normalization(
         normalization_mean, normalization_std).to(device)
 
-    # just in order to have an iterable access to or list of content/syle
-    # losses
     content_losses = []
     style_losses = []
 
-    # assuming that cnn is a nn.Sequential, so we make a new nn.Sequential
-    # to put in modules that are supposed to be activated sequentially
     model = nn.Sequential(normalization)
 
-    i = 0  # increment every time we see a conv
+    # Loop through all the layers
+    i = 0  # increment every time we see a conv layer
     for layer in cnn.children():
         if isinstance(layer, nn.Conv2d):
             i += 1
             name = 'conv_{}'.format(i)
         elif isinstance(layer, nn.ReLU):
             name = 'relu_{}'.format(i)
-            # The in-place version doesn't play very nicely with the ContentLoss
-            # and StyleLoss we insert below. So we replace with out-of-place
-            # ones here.
             layer = nn.ReLU(inplace=False)
         elif isinstance(layer, nn.MaxPool2d):
             name = 'pool_{}'.format(i)
@@ -149,14 +150,14 @@ def get_style_model_and_losses(cnn, normalization_mean, normalization_std,
         model.add_module(name, layer)
 
         if name in content_layers:
-            # add content loss:
+            # calculating content loss for a content layer:
             target = model(content_img).detach()
             content_loss = ContentLoss(target)
             model.add_module("content_loss_{}".format(i), content_loss)
             content_losses.append(content_loss)
 
         if name in style_layers:
-            # add style loss:
+            # calculating style loss for style layers
             target_feature = model(style_img).detach()
             style_loss = StyleLoss(target_feature)
             model.add_module("style_loss_{}".format(i), style_loss)
@@ -178,14 +179,16 @@ def get_input_optimizer(input_img):
     return optimizer
 
 
-def run_style_transfer(cnn, normalization_mean, normalization_std,
-                       content_img, style_img, input_img, num_steps=300,
-                       style_weight=1000000, content_weight=1):
+def run_style_transfer(cnn, normalization_mean, normalization_std, content_img, style_img, input_img):
+    num_steps = 300
+    style_weight = 1000000
+    content_weight = 0
+    # style_weight = 999990
+    # content_weight = 10
     print('Building the style transfer model..')
-    model, style_losses, content_losses = get_style_model_and_losses(cnn,
-                                                                     normalization_mean, normalization_std, style_img, content_img)
-    # We want to optimize the input and not the model parameters so we
-    # update all the requires_grad fields accordingly
+    model, style_losses, content_losses = get_nst_model_and_losses(
+        cnn, normalization_mean, normalization_std, style_img, content_img)
+
     input_img.requires_grad_(True)
     model.requires_grad_(False)
 
@@ -193,8 +196,8 @@ def run_style_transfer(cnn, normalization_mean, normalization_std,
 
     print('Optimizing..')
     run = [0]
-    while run[0] <= num_steps:
 
+    while run[0] <= num_steps:
         def closure():
             # correct the values of updated input image
             with torch.no_grad():
@@ -210,6 +213,7 @@ def run_style_transfer(cnn, normalization_mean, normalization_std,
             for cl in content_losses:
                 content_score += cl.loss
 
+            # Loss formular: content_weight * content_losses + style_weight * style_losses
             style_score *= style_weight
             content_score *= content_weight
 
@@ -217,13 +221,17 @@ def run_style_transfer(cnn, normalization_mean, normalization_std,
             loss.backward()
 
             run[0] += 1
-            if run[0] % 50 == 0:
-                print("run {}:".format(run))
+
+            check_point = 50
+            if run[0] % check_point == 0:
+                print("Thread1 - Run {}:".format(run))
                 print('Style Loss : {:4f} Content Loss: {:4f}'.format(
                     style_score.item(), content_score.item()))
                 print()
 
             return style_score + content_score
+        # applies the loss and reduces it to minimize the loss of content and style on the image
+        # The optimizer tries to adjust the parameters in such a way that the loss function is minimized
 
         optimizer.step(closure)
 
@@ -231,6 +239,7 @@ def run_style_transfer(cnn, normalization_mean, normalization_std,
     with torch.no_grad():
         input_img.clamp_(0, 1)
 
+    print(num_steps)
     return input_img
 
 
@@ -257,7 +266,68 @@ def getNSTimage(content_image, style_image):
     return toPIL(output)
 
 
-def getForegroundNSTimage(content_image, style_image):
+def run_style_transfer_with_weight(cnn, normalization_mean, normalization_std, content_img, style_img, input_img, weight):
+    num_steps = 300
+
+    content_weight = weight
+    style_weight = 1000000-weight
+    print('Building the style transfer model..')
+    model, style_losses, content_losses = get_nst_model_and_losses(
+        cnn, normalization_mean, normalization_std, style_img, content_img)
+
+    input_img.requires_grad_(True)
+    model.requires_grad_(False)
+
+    optimizer = get_input_optimizer(input_img)
+
+    print('Optimizing..')
+    run = [0]
+
+    while run[0] <= num_steps:
+        def closure():
+            # correct the values of updated input image
+            with torch.no_grad():
+                input_img.clamp_(0, 1)
+
+            optimizer.zero_grad()
+            model(input_img)
+            style_score = 0
+            content_score = 0
+
+            for sl in style_losses:
+                style_score += sl.loss
+            for cl in content_losses:
+                content_score += cl.loss
+
+            style_score *= style_weight
+            content_score *= content_weight
+
+            loss = style_score + content_score
+            loss.backward()
+
+            run[0] += 1
+
+            check_point = 50
+            if run[0] % check_point == 0:
+                print("Thread2 - Run {}:".format(run))
+                print('Style Loss : {:4f} Content Loss: {:4f}'.format(
+                    style_score.item(), content_score.item()))
+                
+                print()
+
+            return style_score + content_score
+
+        optimizer.step(closure)
+
+    # a last correction...
+    with torch.no_grad():
+        input_img.clamp_(0, 1)
+
+    print(num_steps)
+    return input_img
+
+
+def getNSTimageWithWeight(content_image, style_image, weight):
 
     tensor_content_img = toTensor(content_image)
     tensor_style_img = toTensor(style_image)
@@ -269,19 +339,7 @@ def getForegroundNSTimage(content_image, style_image):
 
     input_img = tensor_content_img.clone()
 
-    output = run_style_transfer(cnn, cnn_normalization_mean, cnn_normalization_std,
-                                tensor_content_img, tensor_style_img, input_img)
+    output = run_style_transfer_with_weight(cnn, cnn_normalization_mean, cnn_normalization_std,
+                                tensor_content_img, tensor_style_img, input_img, weight)
 
-    PIL_output = toPIL(output)
-    PIL_content_img = toPIL(tensor_content_img.clone()).resize((128, 128))
-    width, height = PIL_output.size
-    for x in range(width):
-        for y in range(height):
-            # Get the color of the pixel from the content image
-            content_color = PIL_content_img.getpixel((x, y))
-
-            # If the color of the pixel in the content image is black, keep it in the output image
-            if content_color == (0, 0, 0):
-                PIL_output.putpixel((x, y), content_color)
-
-    return PIL_output
+    return toPIL(output)
