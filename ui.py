@@ -22,8 +22,7 @@ def select_image():
 
 def getMixedFogroundImage(mixed_image, content_image):
 
-    foreground_only_img = rembg.remove(
-        content_image).convert('RGB').resize((200, 200))
+    foreground_only_img = rembg.remove(content_image).convert('RGB').resize((200, 200))
     content_image_resize = content_image.resize((200, 200))
     width, height = foreground_only_img.size
 
@@ -235,9 +234,10 @@ def create_interface():
         download_button.pack()
         download_button.place(x=185, y=500)
 
+
+
     start_button = tk.Button(
         root, text="Start", state="disabled", command=start_style_transfer)
-
     start_button.pack()
     start_button.place(x=90, y=500)
 

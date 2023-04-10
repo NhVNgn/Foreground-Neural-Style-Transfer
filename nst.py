@@ -29,7 +29,7 @@ imsize = 512 if torch.cuda.is_available() else 128  # use small size if no gpu
 
 loader = transforms.Compose([
     transforms.Resize(imsize),  # scale imported image
-    transforms.ToTensor()])  # transform it into a torch tensor
+    transforms.ToTensor()])  # transform it into a torch tensor (3D matrix)
 
 
 def image_loader(image_name):
@@ -41,16 +41,6 @@ def image_loader(image_name):
 
 unloader = transforms.ToPILImage()  # reconvert into PIL image
 plt.ion()
-
-
-def imshow(tensor, title=None):
-    image = tensor.cpu().clone()  # we clone the tensor to not do changes on it
-    image = image.squeeze(0)      # remove the fake batch dimension
-    image = unloader(image)
-    plt.imshow(image)
-    if title is not None:
-        plt.title(title)
-    plt.pause(0.001)  # pause a bit so that plots are updated
 
 
 def toPIL(tensor):
@@ -76,16 +66,10 @@ class ContentLoss(nn.Module):
 #  The gram matrix represents the correlations between the different feature maps of a given layer
 def gram_matrix(input):
     batch_size, channel, width, height = input.size()
-    # a=batch size(=1)
-    # b=number of feature maps
-    # (c,d)=dimensions of a f. map (N=c*d)
-
-    # resise F_XL into \hat F_XL
+    # extract the features of a layers
     features = input.view(batch_size * channel, width * height)
-
     # compute the gram product, t(): transpose
     G = torch.mm(features, features.t())
-
     # normalize the values of the gram matrix by dividing by the number of element in each feature maps.
     return G.div(batch_size * channel * width * height)
 
@@ -183,8 +167,6 @@ def run_style_transfer(cnn, normalization_mean, normalization_std, content_img, 
     num_steps = 300
     style_weight = 1000000
     content_weight = 0
-    # style_weight = 999990
-    # content_weight = 10
     print('Building the style transfer model..')
     model, style_losses, content_losses = get_nst_model_and_losses(
         cnn, normalization_mean, normalization_std, style_img, content_img)
@@ -249,6 +231,8 @@ def toTensor(pil_image):
 
 
 def getNSTimage(content_image, style_image):
+    content_image = content_image.resize((128, 128))
+    style_image = style_image.resize((128, 128))
 
     tensor_content_img = toTensor(content_image)
     tensor_style_img = toTensor(style_image)
@@ -328,6 +312,10 @@ def run_style_transfer_with_weight(cnn, normalization_mean, normalization_std, c
 
 
 def getNSTimageWithWeight(content_image, style_image, weight):
+    
+
+    content_image = content_image.resize((128, 128))
+    style_image = style_image.resize((128, 128))
 
     tensor_content_img = toTensor(content_image)
     tensor_style_img = toTensor(style_image)
